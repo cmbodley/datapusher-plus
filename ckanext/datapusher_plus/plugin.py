@@ -36,7 +36,7 @@ class DatapusherPlusPlugin(p.SingletonPlugin):
     p.implements(p.IConfigurer, inherit=True)
     p.implements(p.IConfigurable, inherit=True)
     p.implements(p.IActions)
-    p.implements(p.IFormRedirect)
+    #p.implements(p.IFormRedirect)
     p.implements(p.IAuthFunctions)
     p.implements(p.IPackageController, inherit=True)
     p.implements(p.IResourceUrlChange)
