@@ -661,6 +661,7 @@ def _push_to_datastore(
 
     logger.info("Well-formed, valid CSV file confirmed...")
 
+
     # --------------------- Sortcheck --------------------------
     # if SORT_AND_DUPE_CHECK is True or DEDUP is True
     # check if the file is sorted and if it has duplicates
