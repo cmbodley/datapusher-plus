@@ -16,6 +16,22 @@ USE_PROXY = "ckanext.datapusher_plus.download_proxy" in tk.config
 if USE_PROXY:
     DOWNLOAD_PROXY = tk.config.get("ckanext.datapusher_plus.download_proxy")
 
+# --- TLS1.2 compatibility workaround for problematic HTTPS origins (per-download only) ---
+# Enable with CKAN config (e.g. in your CKAN .ini):
+#   ckanext.datapusher_plus.download_tls12_compat_enabled = true
+#
+# Optional overrides:
+#   ckanext.datapusher_plus.download_tls12_compat_ciphers = AES128-GCM-SHA256:DEFAULT@SECLEVEL=1
+DOWNLOAD_TLS12_COMPAT_ENABLED = tk.asbool(
+    tk.config.get("ckanext.datapusher_plus.download_tls12_compat_enabled", False)
+)
+DOWNLOAD_TLS12_COMPAT_CIPHERS = tk.config.get(
+    "ckanext.datapusher_plus.download_tls12_compat_ciphers",
+    "AES128-GCM-SHA256:DEFAULT@SECLEVEL=1",
+)
+
+
+
 # PostgreSQL integer limits
 POSTGRES_INT_MAX = 2147483647
 POSTGRES_INT_MIN = -2147483648
