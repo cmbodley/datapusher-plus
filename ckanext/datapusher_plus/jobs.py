@@ -19,6 +19,9 @@ import requests
 from pathlib import Path
 from typing import Dict, Any, Optional, List
 
+from urllib3.poolmanager import PoolManager
+from requests.adapters import HTTPAdapter
+
 # Third-party imports
 import psycopg2
 from psycopg2 import sql
