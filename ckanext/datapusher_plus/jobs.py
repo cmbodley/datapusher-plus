@@ -45,6 +45,42 @@ if locale.getdefaultlocale()[0]:
 else:
     locale.setlocale(locale.LC_ALL, "")
 
+class TLS12CompatAdapter(HTTPAdapter):
+    """
+    Force TLSv1.2 + relaxed cipher security level for a small set of problematic servers.
+    Applied only when we explicitly mount this adapter onto a per-download Session.
+    """
+
+    def init_poolmanager(self, connections, maxsize, block=False, **pool_kwargs):
+        ctx = ssl.create_default_context()
+        ctx.minimum_version = ssl.TLSVersion.TLSv1_2
+        ctx.maximum_version = ssl.TLSVersion.TLSv1_2
+        ctx.set_ciphers(conf.DOWNLOAD_TLS12_COMPAT_CIPHERS)
+
+        self.poolmanager = PoolManager(
+            num_pools=connections,
+            maxsize=maxsize,
+            block=block,
+            ssl_context=ctx,
+            **pool_kwargs,
+        )
+
+
+def _download_session_for_resource(resource: Dict[str, Any]) -> requests.Session:
+    """
+    Create a requests.Session for downloading the *remote resource URL*.
+
+    Requirement: do not change global requests behavior; only patch remote downloads.
+    We treat CKAN 'upload' resources as internal (authenticated) fetches and do not
+    apply TLS1.2-compat there.
+    """
+    s = requests.Session()
+
+    if conf.DOWNLOAD_TLS12_COMPAT_ENABLED and resource.get("url_type") != "upload":
+        # Only matters for HTTPS; safe to mount regardless.
+        s.mount("https://", TLS12CompatAdapter())
+
+    return s
 
 def validate_input(input: Dict[str, Any]) -> None:
     # Especially validate metadata which is provided by the user
@@ -247,63 +283,67 @@ def _push_to_datastore(
                 "http": conf.DOWNLOAD_PROXY,
                 "https": conf.DOWNLOAD_PROXY,
             }
-        with requests.get(resource_url, **kwargs) as response:
-            response.raise_for_status()
+        session = _download_session_for_resource(resource)
+        try:
+            with session.get(resource_url, **kwargs) as response:
+                response.raise_for_status()
 
-            cl = response.headers.get("content-length")
-            max_content_length = conf.MAX_CONTENT_LENGTH
-            ct = response.headers.get("content-type")
+                cl = response.headers.get("content-length")
+                max_content_length = conf.MAX_CONTENT_LENGTH
+                ct = response.headers.get("content-type")
 
-            try:
-                if cl and int(cl) > max_content_length and conf.PREVIEW_ROWS > 0:
-                    raise utils.JobError(
-                        f"Resource too large to download: {DataSize(int(cl)):.2MB} > max ({DataSize(int(max_content_length)):.2MB})."
-                    )
-            except ValueError:
-                pass
-
-            resource_format = resource.get("format").upper()
-
-            # if format was not specified, try to get it from mime type
-            if not resource_format:
-                logger.info("File format: NOT SPECIFIED")
-                # if we have a mime type, get the file extension from the response header
-                if ct:
-                    resource_format = mimetypes.guess_extension(ct.split(";")[0])
-
-                    if resource_format is None:
+                try:
+                    if cl and int(cl) > max_content_length and conf.PREVIEW_ROWS > 0:
                         raise utils.JobError(
-                            "Cannot determine format from mime type. Please specify format."
+                            f"Resource too large to download: {DataSize(int(cl)):.2MB} > max ({DataSize(int(max_content_length)):.2MB})."
                         )
-                    logger.info(f"Inferred file format: {resource_format}")
+                except ValueError:
+                    pass
+
+                resource_format = resource.get("format").upper()
+
+                # if format was not specified, try to get it from mime type
+                if not resource_format:
+                    logger.info("File format: NOT SPECIFIED")
+                    # if we have a mime type, get the file extension from the response header
+                    if ct:
+                        resource_format = mimetypes.guess_extension(ct.split(";")[0])
+
+                        if resource_format is None:
+                            raise utils.JobError(
+                                "Cannot determine format from mime type. Please specify format."
+                            )
+                        logger.info(f"Inferred file format: {resource_format}")
+                    else:
+                        raise utils.JobError(
+                            "Server did not return content-type. Please specify format."
+                        )
                 else:
-                    raise utils.JobError(
-                        "Server did not return content-type. Please specify format."
-                    )
-            else:
-                logger.info(f"File format: {resource_format}")
+                    logger.info(f"File format: {resource_format}")
 
-            tmp = os.path.join(temp_dir, "tmp." + resource_format)
-            length = 0
-            # using MD5 for file deduplication only
-            # no need for it to be cryptographically secure
-            m = hashlib.md5()  # DevSkim: ignore DS126858
+                tmp = os.path.join(temp_dir, "tmp." + resource_format)
+                length = 0
+                # using MD5 for file deduplication only
+                # no need for it to be cryptographically secure
+                m = hashlib.md5()  # DevSkim: ignore DS126858
 
-            # download the file
-            if cl:
-                logger.info(f"Downloading {DataSize(int(cl)):.2MB} file...")
-            else:
-                logger.info("Downloading file of unknown size...")
+                # download the file
+                if cl:
+                    logger.info(f"Downloading {DataSize(int(cl)):.2MB} file...")
+                else:
+                    logger.info("Downloading file of unknown size...")
 
-            with open(tmp, "wb") as tmp_file:
-                for chunk in response.iter_content(conf.CHUNK_SIZE):
-                    length += len(chunk)
-                    if length > max_content_length and not conf.PREVIEW_ROWS:
-                        raise utils.JobError(
-                            f"Resource too large to process: {length} > max ({max_content_length})."
-                        )
-                    tmp_file.write(chunk)
-                    m.update(chunk)
+                with open(tmp, "wb") as tmp_file:
+                    for chunk in response.iter_content(conf.CHUNK_SIZE):
+                        length += len(chunk)
+                        if length > max_content_length and not conf.PREVIEW_ROWS:
+                            raise utils.JobError(
+                                f"Resource too large to process: {length} > max ({max_content_length})."
+                            )
+                        tmp_file.write(chunk)
+                        m.update(chunk)
+        finally:
+            session.close()
 
     except requests.HTTPError as e:
         raise HTTPError(
